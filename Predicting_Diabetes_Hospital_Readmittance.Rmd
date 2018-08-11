@@ -1,0 +1,216 @@
+---
+title: "Predicting Hospital Readmits for Diabetics"
+output: html_document
+---
+##Introduction
+
+Diabetes is a metabolic disorder that results in high blood sugar. It occurs when the pancreas fails to produce enough insulin or when body cells do not respond properly to the insulin produced. It currently affects over 400 million people worldwide and is a growing problem here in the United States. My inspiration for this project stems from how this disease has affected my family - I have witnessed the complications associated with it. Thus, I am interested in learning more about the disease and its effects in a larger context. 
+
+This dataset includes hospital records from 130 location between 1999 and 2008. Even though the disease is even more prominent now, this set includes features, such as lab tests, gender, age, race, etc., that are still very relevent in learning more about the disease. The data comes from the UCI Repository. I hope to apply some classification models to make predictions about patient readmits.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(ggplot2)
+library(dummies)
+library(dplyr)
+```
+
+
+```{r}
+#Reading the Data
+data <- read.csv("diabetic_data.csv")
+```
+
+```{r}
+#Cleaning the Data
+data$weight <- NULL
+data$payer_code <- NULL
+data$encounter_id <- NULL
+data$patient_nbr <- NULL
+data$admission_source_id <- NULL
+data$change <- NULL
+data$examide <- NULL
+data$citoglipton <- NULL
+data$medical_specialty <- NULL
+data$admission_type_id <- as.factor(data$admission_type_id)
+data$discharge_disposition_id<- as.factor(data$discharge_disposition_id)
+data$diag_1 <- as.integer(data$diag_1)
+data$diag_2 <- as.integer(data$diag_2)
+data$diag_3 <- as.integer(data$diag_3)
+data <- data[!(data$number_diagnoses < 3),]
+
+```
+
+###Do people make an effort to improve their health after receiving poor diagnosis results?
+
+Figure 1 shows the relationship between the first and second diagnosis by race and gender for each record. I originally hypothesized that poor results for the first would lead to individuals taking active measure on their health to improve for the second measurement. However, this does not seem to be the case. It appears that the results are pretty arbritrary from first to second diagnosis with some measurements increasing, some decreasing, and some staying the same.
+
+```{r}
+data = data[sample(nrow(data)), ]
+sample_data1 <- data[1:1000,] #taking 1% of the data
+sample_data1 <- sample_data1[!(sample_data1$race == "?"),]
+baseplot1 <- ggplot(data = sample_data1, aes(x = diag_1, y = diag_2, color = gender))
+baseplot1 + geom_point(size=0.7, alpha=0.5) + facet_wrap(~ race) + ggtitle("Diagnosis by Race and Gender") + xlab("First Diagnosis Measurement") + ylab("Second Diagnosis Measurement") +
+  theme(plot.title = element_text(hjust = 0.5)) + labs(subtitle = "Figure 1") #+ theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+```
+
+##Is there any difference in the number of lab procedures needed for each age groups?
+
+Overall, there does not appear to be a significant difference in the number of lab procedures needed for each age group. Fourty-three lab procedures are customary regardless of age, which makes sense as there are probably set-in-stone procedures that must be administered on every patient when admitted to the hospital with diabetes. 
+
+```{r}
+lab_age <- aggregate(data$num_lab_procedures, list(data$age), mean, na.rm = TRUE)
+names(lab_age) = c("Age Group", "Avg Number of Lab Procedures")
+lab_age
+
+```
+
+
+##How much time can we expect to keep patients in the hospital?
+
+According to Figure 2, in general, as age increases, so does the average time spent in the hospital. This is regardless of whether or not the patient is currently taking diabetes medication indicating age to be a potentially important factor in time spent at the hospital. It is interesting to note that this trend fails to be true for the top two age groups, 80-90 and 90-100. This may be due to life expectancy. Those in these top age brackets admitted to the hospital probably have a smaller likelihood of survival. This would also explain why the number of individuals taking diabetes medication decreases for the top age bracket. Overall, 50-90 year olds constitute the largest number of people taking diabetes medication.
+
+```{r}
+ggplot(data, aes(fill = diabetesMed, y = time_in_hospital, x = age)) + geom_bar(stat = "identity") + ggtitle("Time Spent in the Hospital by Age Group") + xlab("Age") + ylab("Time in Hospital") + theme(plot.title = element_text(hjust = 0.5)) + labs(subtitle = "Figure 2")
+```
+
+##Can we create a model to predict hospital time needed by patients?
+
+Based on our linear model below, we can see that some of the most significant variables include the number of incoming patients, emergencies, and diagnoses. This makes sense because if a hospital were to be busy on any given day, they would probably spend less time with each patient. Additionally, insulin and glipizide levels appear to be very significant. It is interesting that features associated with the hospital condition appear more significant than most of the conditions of the patient. This could mean that insulin and glipizide levels are the two most important things to look at when administering tests on a diabetic patient to determine whether or not they are in need of intensive care. 
+
+It is important to note that our model appears to have a very low p-value (less than 0.05), which indicates that there is some relationship between the features we identified and the time needed by patients. However, our adjusted R-squared value is very low (0.073), which indicates that this model is not the best fit.
+
+```{r}
+#Linear Regression
+
+predict_time_needed <- lm(data = data, data$time_in_hospital ~ number_inpatient + number_emergency + number_diagnoses + max_glu_serum + race + diabetesMed + glipizide + insulin + gender + age)
+
+summary(predict_time_needed)
+```
+
+
+##Do more tests lead to more medications?
+
+There is a somewhat upward trend males - as the number of lab procedures increase, the number of medications they are placed on increases regardless of whether their insulin levels are high, low, or steady. There also appears to be more male outliers with high insulin in comparison to women. Overall, results for women follow a similar trend, but with smaller variance in comparison to men.
+
+```{r}
+ggplot(sample_data1, aes(x = num_lab_procedures, y = num_medications, color = gender, shape = gender)) + facet_wrap(~ insulin) + geom_point(size=2, alpha= 0.5) + geom_smooth() + ggtitle("Number of Lab Procedures vs Number of Patient Medications") + xlab("Number of Lab Procedures") + ylab("Number of Medications") + theme(plot.title = element_text(hjust = 0.5)) + labs(subtitle = "Figure 3")
+```
+
+##Predicting diabetic readmittance to the hospital with K-Nearest Neighbors
+
+We use KNN as a simple approach in trying to predict hospital readmittance. This algorithm identifies k records in the training set that are closest in features to our observation. It does this by calculating the Euclidean distance in multi-dimensional space between our observation and its neighbors. 
+
+It appears that our model was 56% accurate in predicting readmittance with a kappa coefficient  (inter-rate agreement between our expected and predicted variables) of .11. This is alright, however, KNN is a simple algo for classification. It is sensitive to the local structure of the data. Thus, we'll want to explore a few other alorithms and test for better performance. 
+```{r}
+#Randomize, Dummy, Standardize, Subset(10,000 entries), Split Train and Test 
+
+randomized_data = data[sample(nrow(data)), ] 
+
+data_dummies <- dummy.data.frame(randomized_data[1:40], drop = FALSE)
+
+standardized_data <- as.data.frame(scale(data_dummies[1:143]))   #z-score standardization
+
+standardized_data["readmitted"] <- randomized_data$readmitted
+
+subset_data <- standardized_data[1:10000,] #replace with full data after training
+
+df_train <- subset_data %>% sample_frac(.75)
+df_test <- subset_data %>% sample_frac(.25)
+df_trainlabels <- as.factor(df_train$readmitted)
+df_testlabels <- as.factor(df_test$readmitted)
+
+df_test$readmitted <- NULL
+
+```
+
+
+```{r}
+#KNN
+
+library(class)
+library(e1071)
+library(gmodels)
+library(caret)
+
+df_train$readmitted <- NULL
+
+knn_predictions <- knn(train = df_train, test = df_test, df_trainlabels , k = 100)
+
+CrossTable(x = df_testlabels, y = knn_predictions, prop.chisq = FALSE)
+
+confusionMatrix(knn_predictions, df_testlabels)
+
+```
+
+##Predicting diabetic readmittance to the hospital with Support Vector Machines
+
+Support Vector Machines (SVM) is another machine learning algorithm that also uses multidimensional surfaces to discover the relationship between features and outcomes. They combine aspects from instance driven KNN models and linear regression, which allows them to model more complex relationships. Essentially, the model attempts to draws hyper-planes between observations of similar features. Planes are drawn to the right and left of these hyper-planes to calculate the distance from the observed points in each category to the hyper-plane. The best choices will be the hyper-planes that leave the maximum margin from the data points in each class.    
+
+As we can see, our SVM model performed better than our KNN model. We were able to accurately predict 62.5% of observations with a Kappa coefficient of 0.27. 
+```{r}
+#SVM
+library(kernlab)
+df_train["readmitted"] <- df_trainlabels
+diabetes_classifier <-ksvm(df_train$readmitted ~ ., data = df_train, kernal = "vanilladot")
+
+diabetes_predictions <- predict(diabetes_classifier, df_test)
+
+table(diabetes_predictions, df_testlabels)
+
+CrossTable(x = df_testlabels, y = diabetes_predictions, prop.chisq = FALSE)
+
+confusionMatrix(diabetes_predictions, df_testlabels)
+```
+
+##Predicting diabetic readmittance to the hospital with Decision Trees
+
+Decision tree learning uses a series of questions to go from observable traits to some classification conclusion. As we can see in the output below, some of the most important features highlighted include number of in-patients, emergencies, and diagnosis. Similar to building a model to predict the time a patient would need to stay in the hospital, insulin and glipizide levels also are significant features in this model. We can see that this classification tree was 60% accurate in predicting readmittance with a Kappa coefficient of 0.24. 
+
+We also attempted to improve the performance of our decision tree by using adaptive boosting, which boosts the performance of weak learners to capture the performance of strong learners. This resulted in a model that was not as accurate (59%) along with a Kappa coefficient of 0.20.
+
+```{r}
+#Decision Tree
+library(C50)
+
+df_train$readmitted <- NULL
+decision_model <- C5.0(df_train, df_trainlabels)
+summary(decision_model)
+#plot(decision_model)
+decision_prediction <- predict(decision_model, df_test)
+
+CrossTable(df_testlabels, decision_prediction, prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE, dnn = c('actual leaving', 'predicted leaving'))
+
+confusionMatrix(decision_prediction, df_testlabels)
+```
+
+```{r}
+#AdaBoosted Decision Tree
+
+decision_boost10 <- C5.0(df_train, df_trainlabels, trials = 10)
+decision_boost10
+```
+```{r}
+decision_boost_pred10 <- predict(decision_boost10, df_test)
+CrossTable(df_testlabels, decision_boost_pred10, prop.chisq = FALSE, prop.c = FALSE, prop.r = FALSE, dnn = c('actual leaving', 'predicted leaving'))
+
+confusionMatrix(decision_boost_pred10, df_testlabels)
+```
+
+##Conclusion
+
+Overall, our models did a decent job predicting the likelihood of hospital readmittance. The best model proved to be SVM with a 62.5% accuracy and 0.27 Kappa coefficient. In this analysis, we were also able to identify some of the most important features that go into the decision-making process of whether a patient would be readmitted and time they would be there. Using this information, hospitals can take a proactive approach to staffing and catering to diabetic patients' needs. 
+
+Based on this data, we also learned that the disease is more prominent in some races over others and that men typically have more medications administered as the number of lab procedures increase. Additional analyses that would be interesting with more data would be the change of occurence over the years. We read about how diabetes is becoming more prominent amongst younger individuals, however, with the right data, we could get more granular as to who it is affecting most and how doctors are treating it. 
+
+
+
+
+
+
+
